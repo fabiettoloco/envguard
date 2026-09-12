@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,20 +31,54 @@ class Finding:
     message: str
 
 
-def _files(root: Path):
+@dataclass(frozen=True)
+class ScanConfig:
+    ignore: tuple[str, ...] = ()
+    allowlist: frozenset[str] = frozenset()
+
+
+def load_config(root: Path) -> ScanConfig:
+    path = root / "envguard.toml"
+    if not path.exists():
+        return ScanConfig()
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"Invalid envguard.toml: {exc}") from exc
+
+    scan = data.get("scan", {})
+    if not isinstance(scan, dict):
+        raise ValueError("envguard.toml [scan] must be a table")
+
+    ignore = scan.get("ignore", [])
+    allowlist = scan.get("allowlist", [])
+    if not isinstance(ignore, list) or not all(isinstance(item, str) for item in ignore):
+        raise ValueError("envguard.toml [scan].ignore must be an array of strings")
+    if not isinstance(allowlist, list) or not all(isinstance(item, str) for item in allowlist):
+        raise ValueError("envguard.toml [scan].allowlist must be an array of strings")
+
+    return ScanConfig(tuple(ignore), frozenset(allowlist))
+
+
+def _files(root: Path, config: ScanConfig):
     for path in root.rglob("*"):
         if not path.is_file():
             continue
         if any(part in IGNORED_DIRS for part in path.parts):
+            continue
+        relative = path.relative_to(root).as_posix()
+        if any(relative == item.rstrip("/") or relative.startswith(item.rstrip("/") + "/") for item in config.ignore):
             continue
         if path.stat().st_size > 1_000_000:
             continue
         yield path
 
 
-def referenced_variables(root: Path) -> set[str]:
+def referenced_variables(root: Path, config: ScanConfig | None = None) -> set[str]:
+    config = config or ScanConfig()
     found: set[str] = set()
-    for path in _files(root):
+    for path in _files(root, config):
         if path.suffix not in SOURCE_SUFFIXES:
             continue
         try:
@@ -60,13 +95,11 @@ def example_variables(root: Path) -> set[str]:
     path = next((p for p in paths if p.exists()), None)
     if path is None:
         return set()
-
     result: set[str] = set()
     try:
         lines = path.read_text(errors="ignore").splitlines()
     except OSError:
         return result
-
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -77,10 +110,10 @@ def example_variables(root: Path) -> set[str]:
     return result
 
 
-def secret_findings(root: Path) -> list[Finding]:
+def secret_findings(root: Path, config: ScanConfig | None = None) -> list[Finding]:
+    config = config or ScanConfig()
     findings: list[Finding] = []
-    for path in _files(root):
-        # Example/config templates should not normally contain real credentials.
+    for path in _files(root, config):
         try:
             lines = path.read_text(errors="ignore").splitlines()
         except (OSError, UnicodeDecodeError):
@@ -88,32 +121,21 @@ def secret_findings(root: Path) -> list[Finding]:
         for number, line in enumerate(lines, 1):
             for pattern, message in SECRET_PATTERNS:
                 if pattern.search(line):
-                    findings.append(
-                        Finding("secret", str(path.relative_to(root)), number, message)
-                    )
+                    findings.append(Finding("secret", str(path.relative_to(root)), number, message))
     return findings
 
 
 def scan(root: Path) -> list[Finding]:
-    refs = referenced_variables(root)
+    config = load_config(root)
+    refs = referenced_variables(root, config)
     examples = example_variables(root)
     findings = [
-        Finding(
-            "missing-env",
-            ".env.example",
-            1,
-            f"{name} is referenced by source code but missing from .env.example",
-        )
-        for name in sorted(refs - examples)
+        Finding("missing-env", ".env.example", 1, f"{name} is referenced by source code but missing from .env.example")
+        for name in sorted(refs - examples - config.allowlist)
     ]
     findings.extend(
-        Finding(
-            "stale-env",
-            ".env.example",
-            1,
-            f"{name} is listed in .env.example but was not found in source code",
-        )
-        for name in sorted(examples - refs)
+        Finding("stale-env", ".env.example", 1, f"{name} is listed in .env.example but was not found in source code")
+        for name in sorted(examples - refs - config.allowlist)
     )
-    findings.extend(secret_findings(root))
+    findings.extend(secret_findings(root, config))
     return findings
