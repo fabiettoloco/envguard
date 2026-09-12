@@ -10,7 +10,7 @@ Find missing environment variables, stale `.env.example` entries, and accidental
 - Variables documented in `.env.example` but not referenced by the project
 - High-confidence secret patterns in tracked files
 - Optional JSON and SARIF reports for CI integrations
-- Explicit allowlists for intentional values
+- Explicit allowlists for intentional environment variables
 
 ## Quick start
 
@@ -24,19 +24,38 @@ Example:
 ```text
 $ envguard scan .
 
-Environment
-  missing     DATABASE_URL
-  missing     STRIPE_SECRET_KEY
+Environment variables
+  .env.example:1  DATABASE_URL is referenced by source code but missing from .env.example
 
-Secrets
-  warning     config/example.py:12  AWS_SECRET_ACCESS_KEY
+Possible secrets
+  config/example.py:12  possible credential
 
-Summary
-  2 missing variables
-  1 possible secret
+Summary: 2 finding(s).
 ```
 
-The scanner is intentionally conservative. It reports findings; it does not modify files or contact external services.
+## CLI
+
+```text
+envguard scan [PATH] [--format text|json|sarif] [--output FILE]
+               [--config FILE] [--quiet | --verbose]
+```
+
+- `--config FILE` uses a specific TOML configuration file. Without it, `envguard.toml` in the project root is discovered automatically when present.
+- `--verbose` writes scan diagnostics to stderr, keeping stdout available for reports.
+- `--quiet` suppresses the report while preserving the exit status.
+- Exit code `0` means no findings, `1` means findings were detected, and `2` means the scan could not be completed because of invalid input or configuration.
+
+## Configuration
+
+Copy `envguard.toml.example` to `envguard.toml`:
+
+```toml
+[scan]
+ignore = ["docs/", "fixtures/"]
+allowlist = ["CI", "PATH"]
+```
+
+`ignore` excludes paths relative to the project root. `allowlist` excludes named environment variables from missing/stale environment findings.
 
 ## CI
 
@@ -62,15 +81,17 @@ jobs:
           sarif_file: envguard.sarif
 ```
 
-## Design goals
+## Why envguard?
 
-envguard is intentionally:
+envguard focuses on a common gap between application code and deployment configuration: environment variables can be referenced in source, documented in examples, or accidentally committed as secrets, and these states can drift apart. The project is deliberately local-first and deterministic so it can run in CI without an account, hosted service, or telemetry.
 
-- local-first
-- deterministic
-- dependency-light
-- safe to run in CI
-- explicit about false positives
-- useful without an account or hosted service
+## Roadmap
+
+- More language-aware environment-variable detection
+- More configurable secret rules with explicit false-positive handling
+- Pre-commit and reusable GitHub Actions integrations
+- Better SARIF rule metadata and developer-facing diagnostics
+
+The scanner is intentionally conservative. It reports findings; it does not modify files or contact external services.
 
 See `CONTRIBUTING.md` for development and contribution guidelines.
