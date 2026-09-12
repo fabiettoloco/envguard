@@ -1,0 +1,8 @@
+# Copy this file to envguard.toml to customize local scanning.
+
+[scan]
+# Ignore paths relative to the project root.
+ignore = ["docs/", "fixtures/"]
+
+# Environment variables that are intentionally not referenced in source code.
+allowlist = ["CI", "PATH"]
