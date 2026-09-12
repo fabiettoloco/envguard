@@ -41,3 +41,31 @@ def test_private_key_detection(tmp_path: Path):
     (tmp_path / "key.txt").write_text("-----BEGIN PRIVATE KEY-----\n")
     findings = scan(tmp_path)
     assert any(f.kind == "secret" and f.message == "private key" for f in findings)
+
+
+def test_ignore_path_from_config(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "example.py").write_text('import os\nos.getenv("DOCS_ONLY")\n')
+    (tmp_path / ".env.example").write_text("\n")
+    (tmp_path / "envguard.toml").write_text('[scan]\nignore = ["docs/"]\n')
+    findings = scan(tmp_path)
+    assert not any("DOCS_ONLY" in f.message for f in findings)
+
+
+def test_allowlist_from_config(tmp_path: Path):
+    (tmp_path / "app.py").write_text('import os\nos.getenv("CI")\n')
+    (tmp_path / ".env.example").write_text("\n")
+    (tmp_path / "envguard.toml").write_text('[scan]\nallowlist = ["CI"]\n')
+    findings = scan(tmp_path)
+    assert not any("CI" in f.message for f in findings)
+
+
+def test_invalid_config_is_reported(tmp_path: Path):
+    (tmp_path / "envguard.toml").write_text('[scan\n')
+    try:
+        scan(tmp_path)
+    except ValueError as exc:
+        assert "Invalid envguard.toml" in str(exc)
+    else:
+        raise AssertionError("scan() should reject invalid envguard.toml")
