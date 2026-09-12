@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility
+    import tomli as tomllib
 
 ENV_PATTERNS = [
     re.compile(r"os\.environ(?:\.get)?\([\"']([A-Z][A-Z0-9_]+)[\"']\)"),
@@ -37,26 +41,28 @@ class ScanConfig:
     allowlist: frozenset[str] = frozenset()
 
 
-def load_config(root: Path) -> ScanConfig:
-    path = root / "envguard.toml"
+def load_config(root: Path, config_path: Path | None = None) -> ScanConfig:
+    path = config_path or (root / "envguard.toml")
     if not path.exists():
+        if config_path is not None:
+            raise ValueError(f"config file does not exist: {path}")
         return ScanConfig()
     try:
         with path.open("rb") as handle:
             data = tomllib.load(handle)
     except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise ValueError(f"Invalid envguard.toml: {exc}") from exc
+        raise ValueError(f"Invalid configuration: {exc}") from exc
 
     scan = data.get("scan", {})
     if not isinstance(scan, dict):
-        raise ValueError("envguard.toml [scan] must be a table")
+        raise ValueError("[scan] must be a table")
 
     ignore = scan.get("ignore", [])
     allowlist = scan.get("allowlist", [])
     if not isinstance(ignore, list) or not all(isinstance(item, str) for item in ignore):
-        raise ValueError("envguard.toml [scan].ignore must be an array of strings")
+        raise ValueError("[scan].ignore must be an array of strings")
     if not isinstance(allowlist, list) or not all(isinstance(item, str) for item in allowlist):
-        raise ValueError("envguard.toml [scan].allowlist must be an array of strings")
+        raise ValueError("[scan].allowlist must be an array of strings")
 
     return ScanConfig(tuple(ignore), frozenset(allowlist))
 
@@ -125,8 +131,8 @@ def secret_findings(root: Path, config: ScanConfig | None = None) -> list[Findin
     return findings
 
 
-def scan(root: Path) -> list[Finding]:
-    config = load_config(root)
+def scan(root: Path, config_path: Path | None = None) -> list[Finding]:
+    config = load_config(root, config_path)
     refs = referenced_variables(root, config)
     examples = example_variables(root)
     findings = [
