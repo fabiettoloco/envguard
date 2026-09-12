@@ -66,6 +66,6 @@ def test_invalid_config_is_reported(tmp_path: Path):
     try:
         scan(tmp_path)
     except ValueError as exc:
-        assert "Invalid envguard.toml" in str(exc)
+        assert "Invalid configuration" in str(exc)
     else:
         raise AssertionError("scan() should reject invalid envguard.toml")
